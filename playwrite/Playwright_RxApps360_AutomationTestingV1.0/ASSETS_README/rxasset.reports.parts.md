@@ -1,0 +1,25 @@
+# RxAsset Parts Reports Test
+
+## Test File
+
+`src/tests/rxapps/rxasset/rxasset.reports.parts.test.ts`
+
+## Purpose
+
+This test verifies that the user can open Parts Reports from the Reports sidebar menu.
+
+## Process
+
+1. Log in with MFA.
+2. Confirm the user avatar is visible.
+3. Open RxAsset.
+4. Expand the `Reports` sidebar menu.
+5. Click `Parts Reports`.
+6. Verify the `Parts Reports` heading is visible.
+7. Capture screenshot evidence as `rxasset-parts-reports`.
+
+## Run Command
+
+```bash
+npx playwright test rxapps/rxasset/rxasset.reports.parts.test.ts
+```
