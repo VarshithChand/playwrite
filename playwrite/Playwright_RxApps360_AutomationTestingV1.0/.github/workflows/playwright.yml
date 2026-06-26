@@ -1,0 +1,132 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub Actions – Playwright CI pipeline
+#
+# What it does on every push / PR to main (and via manual trigger):
+#   1. Checks out the code
+#   2. Installs Node + npm dependencies (cached for speed)
+#   3. Installs the Playwright browsers
+#   4. Runs the full test suite
+#   5. Uploads the Allure results + HTML report as downloadable artifacts
+#   6. Publishes the Allure report to GitHub Pages (main branch only)
+# ─────────────────────────────────────────────────────────────────────────────
+name: Playwright Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch: # lets you run it manually from the Actions tab
+
+# Cancel an in-progress run if a newer commit is pushed to the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run Playwright Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Run across multiple Node versions to catch version-specific issues.
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      # 1. Get the source code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Node with built-in npm caching
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      # 3. Install dependencies reproducibly (uses package-lock.json)
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. Install Playwright browsers + OS dependencies
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # 5. Run the tests (CI env var enables retries via playwright.config.ts)
+      #    Secrets are injected from the repo's GitHub Actions Secrets — they are
+      #    NEVER stored in git. The framework reads them via process.env in
+      #    config/env.config.ts, exactly like it reads the local .env file.
+      #    Set these under: GitHub repo → Settings → Secrets and variables →
+      #    Actions → New repository secret.
+      - name: Run Playwright tests
+        run: npm test
+        env:
+          CI: true
+          LOG_LEVEL: info
+          BASE_URL: ${{ secrets.BASE_URL }}
+          APP_USER: ${{ secrets.APP_USER }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          MFA_SECRET: ${{ secrets.MFA_SECRET }}
+
+      # 6. Always upload the raw Allure results so the report can be built
+      - name: Upload Allure results
+        if: always() # upload even when tests fail — that's when you need them most
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-node${{ matrix.node-version }}
+          path: allure-results/
+          retention-days: 30
+
+      # 7. Always upload the Playwright HTML report (traces, screenshots, videos)
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-node${{ matrix.node-version }}
+          path: playwright-report/
+          retention-days: 30
+
+  # ── Publish a browsable Allure report to GitHub Pages (main branch only) ────
+  publish-report:
+    name: Publish Allure Report
+    needs: test
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to push to the gh-pages branch
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pull the Allure results produced by the Node 22 test job
+      - name: Download Allure results
+        uses: actions/download-artifact@v4
+        with:
+          name: allure-results-node22
+          path: allure-results
+
+      # Keep report history across runs (trend graphs) by reusing gh-pages
+      - name: Load previous Allure history
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Build Allure report
+        uses: simple-elf/allure-report-action@v1.9
+        with:
+          allure_results: allure-results
+          allure_history: allure-history
+          gh_pages: gh-pages
+
+      - name: Deploy report to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: allure-history
